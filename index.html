@@ -9,59 +9,148 @@
 
 <div id="cb-box" style="font-family:sans-serif;max-width:420px;margin:16px auto;padding:16px;border:1px solid #ccc;border-radius:12px">
   <button id="cb-btn" type="button" style="width:100%;padding:12px;font-size:16px;border:0;border-radius:8px;background:#1a73e8;color:#fff">
-    قراءة الحافظة وحفظها JSON
+    قراءة الحافظة وحفظها في المستودع
   </button>
   <p id="cb-status" style="margin:12px 0 0;font-size:14px"></p>
 </div>
 
 <script>
 (function () {
+  // ===== الإعدادات =====
+  var OWNER  = "";                 // اتركه فارغاً ليُكتشف تلقائياً من رابط الموقع
+  var REPO   = "";                 // اتركه فارغاً ليُكتشف تلقائياً
+  var FILE   = "clipboard.json";   // الملف داخل المستودع (يُنشأ تلقائياً)
+  var BRANCH = "";                 // فارغ = الفرع الافتراضي
+  // توكن للتجربة فقط - احذفه بعد الاختبار
+  var TOKEN = "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";
+  // =====================
+
   var btn = document.getElementById("cb-btn");
-  var status = document.getElementById("cb-status");
+  var statusEl = document.getElementById("cb-status");
 
   function say(msg, ok) {
-    status.textContent = msg;
-    status.style.color = ok ? "#188038" : "#d93025";
+    statusEl.textContent = msg;
+    statusEl.style.color = ok ? "#188038" : "#d93025";
   }
 
-  // يعمل على أندرويد فقط
+  // ---- أندرويد فقط ----
   if (!/Android/i.test(navigator.userAgent)) {
     btn.disabled = true;
     btn.style.background = "#999";
     say("هذه الميزة تعمل على أندرويد فقط.", false);
     return;
   }
-
   if (!navigator.clipboard || !navigator.clipboard.readText) {
     btn.disabled = true;
     say("المتصفح لا يدعم قراءة الحافظة. استخدم Chrome.", false);
     return;
   }
 
-  function saveJson(obj) {
-    var blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = "clipboard-" + Date.now() + ".json";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  // ---- اكتشاف المالك والمستودع من رابط GitHub Pages ----
+  var host = location.hostname;
+  var parts = location.pathname.split("/").filter(Boolean);
+  if (!OWNER) OWNER = host.split(".")[0];
+  if (!REPO) {
+    if (parts.length && parts[0].indexOf(".") === -1) REPO = parts[0];   // مستودع مشروع: owner.github.io/repo/
+    else REPO = OWNER + ".github.io";                                     // موقع المستخدم
   }
 
+  // ---- UTF-8 <-> base64 ----
+  function toB64(str) {
+    var bytes = new TextEncoder().encode(str), bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  function fromB64(b64) {
+    var bin = atob(b64.replace(/\s/g, "")), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  // ---- الكتابة في المستودع عبر GitHub API ----
+  var API = "https://api.github.com/repos/" + OWNER + "/" + REPO + "/contents/" + FILE;
+
+  function headers() {
+    return {
+      "Authorization": "Bearer " + TOKEN,
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    };
+  }
+
+  async function appendToRepo(entry) {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      var getUrl = API + (BRANCH ? "?ref=" + encodeURIComponent(BRANCH) : "");
+      var res = await fetch(getUrl, { headers: headers(), cache: "no-store" });
+
+      var arr = [], sha;
+      if (res.status === 200) {
+        var j = await res.json();
+        sha = j.sha;
+        try {
+          var parsed = JSON.parse(fromB64(j.content));
+          arr = Array.isArray(parsed) ? parsed : [parsed];
+        } catch (e) { arr = []; }
+      } else if (res.status === 404) {
+        // الملف غير موجود: سيُنشأ
+      } else if (res.status === 401 || res.status === 403) {
+        var err = new Error("auth"); err.code = "auth"; throw err;
+      } else {
+        throw new Error("GitHub: " + res.status);
+      }
+
+      arr.push(entry);
+
+      var body = {
+        message: "clipboard: " + entry.savedAt,
+        content: toB64(JSON.stringify(arr, null, 2))
+      };
+      if (sha) body.sha = sha;
+      if (BRANCH) body.branch = BRANCH;
+
+      var put = await fetch(API, {
+        method: "PUT",
+        headers: Object.assign({ "Content-Type": "application/json" }, headers()),
+        body: JSON.stringify(body)
+      });
+
+      if (put.status === 200 || put.status === 201) return arr.length;
+      if ((put.status === 409 || put.status === 422) && attempt === 0) continue;  // تعارض: أعد المحاولة
+      if (put.status === 401 || put.status === 403) {
+        var err2 = new Error("auth"); err2.code = "auth"; throw err2;
+      }
+      throw new Error("GitHub: " + put.status);
+    }
+  }
+
+  // ---- الزر ----
   btn.addEventListener("click", async function () {
+    var text;
     try {
-      var text = await navigator.clipboard.readText();
-      if (!text) { say("الحافظة فارغة.", false); return; }
-      saveJson({ text: text, savedAt: new Date().toISOString() });
-      say("تم الحفظ في ملف JSON (تحقق من مجلد التنزيلات).", true);
+      text = await navigator.clipboard.readText();
     } catch (e) {
       if (e && e.name === "NotAllowedError") {
-        say("لم يتم منح الإذن. إذا ظهرت رسالة \"This site can't ask for your permission\" فأغلق أي نافذة عائمة أو فقاعة من تطبيق آخر (فيديو، بث، مسنجر...) ثم اضغط الزر مجدداً. وإذا رفضت الإذن سابقاً فاسمح به من إعدادات الموقع في Chrome.", false);
+        say("لم يتم منح إذن الحافظة. إذا ظهرت رسالة \"This site can't ask for your permission\" فأغلق أي نافذة عائمة من تطبيق آخر ثم أعد المحاولة.", false);
       } else {
-        say("تعذّر القراءة: " + (e && e.message ? e.message : e), false);
+        say("تعذّر قراءة الحافظة: " + (e && e.message ? e.message : e), false);
       }
+      return;
+    }
+    if (!text) { say("الحافظة فارغة.", false); return; }
+
+    btn.disabled = true;
+    say("جارٍ الحفظ في المستودع...", true);
+    try {
+      var n = await appendToRepo({ text: text, savedAt: new Date().toISOString() });
+      say("تم الحفظ في " + FILE + " (عدد العناصر: " + n + ").", true);
+    } catch (e) {
+      if (e && e.code === "auth") {
+        say("التوكن غير صالح أو لا يملك صلاحية الكتابة.", false);
+      } else {
+        say("فشل الحفظ: " + (e && e.message ? e.message : e), false);
+      }
+    } finally {
+      btn.disabled = false;
     }
   });
 })();
