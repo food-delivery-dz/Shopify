@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>الحافظة إلى JSON</title>
+</head>
+<body>
+
+<div id="cb-box" style="font-family:sans-serif;max-width:420px;margin:16px auto;padding:16px;border:1px solid #ccc;border-radius:12px">
+  <button id="cb-btn" type="button" style="width:100%;padding:12px;font-size:16px;border:0;border-radius:8px;background:#1a73e8;color:#fff">
+    قراءة الحافظة وحفظها JSON
+  </button>
+  <p id="cb-status" style="margin:12px 0 0;font-size:14px"></p>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById("cb-btn");
+  var status = document.getElementById("cb-status");
+
+  function say(msg, ok) {
+    status.textContent = msg;
+    status.style.color = ok ? "#188038" : "#d93025";
+  }
+
+  // يعمل على أندرويد فقط
+  if (!/Android/i.test(navigator.userAgent)) {
+    btn.disabled = true;
+    btn.style.background = "#999";
+    say("هذه الميزة تعمل على أندرويد فقط.", false);
+    return;
+  }
+
+  if (!navigator.clipboard || !navigator.clipboard.readText) {
+    btn.disabled = true;
+    say("المتصفح لا يدعم قراءة الحافظة. استخدم Chrome.", false);
+    return;
+  }
+
+  function saveJson(obj) {
+    var blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "clipboard-" + Date.now() + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  btn.addEventListener("click", async function () {
+    try {
+      var text = await navigator.clipboard.readText();
+      if (!text) { say("الحافظة فارغة.", false); return; }
+      saveJson({ text: text, savedAt: new Date().toISOString() });
+      say("تم الحفظ في ملف JSON (تحقق من مجلد التنزيلات).", true);
+    } catch (e) {
+      if (e && e.name === "NotAllowedError") {
+        say("لم يتم منح الإذن. إذا ظهرت رسالة \"This site can't ask for your permission\" فأغلق أي نافذة عائمة أو فقاعة من تطبيق آخر (فيديو، بث، مسنجر...) ثم اضغط الزر مجدداً. وإذا رفضت الإذن سابقاً فاسمح به من إعدادات الموقع في Chrome.", false);
+      } else {
+        say("تعذّر القراءة: " + (e && e.message ? e.message : e), false);
+      }
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
