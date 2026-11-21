@@ -1,0 +1,64 @@
+<!-- ===== الصق هذا الجزء داخل صفحتك حيث تريد الميزة ===== -->
+<div id="cb-box" dir="rtl" style="font-family:sans-serif;max-width:420px;margin:16px auto;padding:16px;border:1px solid #ccc;border-radius:12px">
+  <button id="cb-btn" type="button" style="width:100%;padding:12px;font-size:16px;border:0;border-radius:8px;background:#1a73e8;color:#fff">
+    قراءة الحافظة وحفظها JSON
+  </button>
+  <p id="cb-status" style="margin:12px 0 0;font-size:14px"></p>
+</div>
+
+<script>
+(function () {
+  var btn = document.getElementById("cb-btn");
+  var status = document.getElementById("cb-status");
+
+  function say(msg, ok) {
+    status.textContent = msg;
+    status.style.color = ok ? "#188038" : "#d93025";
+  }
+
+  // يعمل على أندرويد فقط
+  var isAndroid = /Android/i.test(navigator.userAgent);
+  if (!isAndroid) {
+    btn.disabled = true;
+    btn.style.background = "#999";
+    say("هذه الميزة تعمل على أندرويد فقط.", false);
+    return;
+  }
+
+  // يحتاج HTTPS (GitHub Pages يوفره) ودعم Clipboard API
+  if (!navigator.clipboard || !navigator.clipboard.readText) {
+    btn.disabled = true;
+    say("المتصفح لا يدعم قراءة الحافظة. استخدم Chrome.", false);
+    return;
+  }
+
+  function saveJson(obj) {
+    var blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "clipboard-" + Date.now() + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  // يجب أن يكون الطلب بعد ضغطة المستخدم
+  btn.addEventListener("click", async function () {
+    try {
+      var text = await navigator.clipboard.readText();
+      if (!text) { say("الحافظة فارغة.", false); return; }
+      saveJson({ text: text, savedAt: new Date().toISOString() });
+      say("تم الحفظ في ملف JSON (تحقق من مجلد التنزيلات).", true);
+    } catch (e) {
+      if (e && e.name === "NotAllowedError") {
+        say("تم رفض إذن قراءة الحافظة.", false);
+      } else {
+        say("تعذّر القراءة: " + (e && e.message ? e.message : e), false);
+      }
+    }
+  });
+})();
+</script>
+<!-- ===== نهاية الجزء ===== -->
