@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تحليلات الزوار</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1a1d21; --muted:#6b7280; --accent:#2563eb; --border:#e5e7eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --card:#181b21; --text:#eceef1; --muted:#9aa3af; --accent:#60a5fa; --border:#2a2f38; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,"Segoe UI",Tahoma,sans-serif; background:var(--bg); color:var(--text); padding:16px; }
+  main { max-width:640px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:12px; }
+  button { font:inherit; border:0; border-radius:8px; padding:10px 18px; cursor:pointer; }
+  .yes { background:var(--accent); color:#fff; }
+  .no { background:transparent; color:var(--muted); border:1px solid var(--border); }
+  table { width:100%; border-collapse:collapse; }
+  td { padding:8px 4px; border-bottom:1px solid var(--border); font-size:14px; word-break:break-word; }
+  td:first-child { color:var(--muted); width:42%; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card" id="consent">
+    <h3>نحترم خصوصيتك</h3>
+    <p>نجمع معلومات تقنية عامة (نوع الجهاز، حجم الشاشة، اللغة، المنطقة الزمنية) لتحسين الموقع وتقديم محتوى مناسب. لا نجمع اسمك أو بياناتك الشخصية.</p>
+    <button class="yes" id="accept">موافق</button>
+    <button class="no" id="decline">رفض</button>
+  </div>
+
+  <div class="card" id="result" hidden>
+    <h3>البيانات المجمّعة</h3>
+    <table id="tbl"></table>
+  </div>
+</main>
+
+<script>
+// ضع رابط الخادم الذي يستقبل البيانات (اتركه فارغاً للعرض فقط)
+const ENDPOINT = "https://clipboard-d1a48-default-rtdb.firebaseio.com/clipboard.json";
+
+function collect() {
+  const nav = navigator;
+  const conn = nav.connection || nav.mozConnection || nav.webkitConnection || {};
+  let gpu = "غير متاح";
+  try {
+    const gl = document.createElement("canvas").getContext("webgl");
+    const ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
+    if (ext) gpu = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+  } catch (e) {}
+
+  return {
+    timestamp: new Date().toISOString(),
+    page: location.href,
+    referrer: document.referrer || "مباشر",
+    language: nav.language,
+    languages: (nav.languages || []).join(", "),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    screen: screen.width + "×" + screen.height,
+    viewport: innerWidth + "×" + innerHeight,
+    pixelRatio: devicePixelRatio,
+    cpuCores: nav.hardwareConcurrency || "غير متاح",
+    deviceMemoryGB: nav.deviceMemory || "غير متاح",
+    touchPoints: nav.maxTouchPoints,
+    vendor: nav.vendor || "غير متاح",
+    platform: nav.platform,
+    userAgent: nav.userAgent,
+    cookiesEnabled: nav.cookieEnabled,
+    doNotTrack: nav.doNotTrack || "غير محدد",
+    gpu: gpu,
+    connectionType: conn.effectiveType || "غير متاح",
+    downlinkMbps: conn.downlink || "غير متاح",
+    saveData: conn.saveData ?? "غير متاح",
+    // معلومات إضافية لا تحتاج أي إذن
+    localHour: new Date().getHours(),
+    utmSource: new URLSearchParams(location.search).get("utm_source") || "-",
+    utmCampaign: new URLSearchParams(location.search).get("utm_campaign") || "-",
+    colorScheme: matchMedia("(prefers-color-scheme: dark)").matches ? "داكن" : "فاتح",
+    reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    pointerType: matchMedia("(pointer: coarse)").matches ? "لمس" : "ماوس",
+    orientation: innerWidth > innerHeight ? "أفقي" : "عمودي",
+    colorDepth: screen.colorDepth,
+    online: nav.onLine,
+    standaloneApp: matchMedia("(display-mode: standalone)").matches,
+    visitCount: (function () {
+      try {
+        const n = (+localStorage.getItem("visit-count") || 0) + 1;
+        localStorage.setItem("visit-count", n);
+        return n;
+      } catch (e) { return "غير متاح"; }
+    })(),
+    loadTimeMs: (function () {
+      const t = performance.getEntriesByType("navigation")[0];
+      return t ? Math.round(t.loadEventEnd || t.domContentLoadedEventEnd) : "غير متاح";
+    })()
+  };
+}
+
+function render(data) {
+  const tbl = document.getElementById("tbl");
+  tbl.innerHTML = "";
+  for (const [k, v] of Object.entries(data)) {
+    const tr = document.createElement("tr");
+    const a = document.createElement("td"); a.textContent = k;
+    const b = document.createElement("td"); b.textContent = String(v);
+    tr.append(a, b); tbl.append(tr);
+  }
+  document.getElementById("result").hidden = false;
+}
+
+function send(data) {
+  if (!ENDPOINT) return;
+  // بدون ترويسات مخصصة لتجنب مشاكل CORS مع Firebase (POST يضيف سجلاً جديداً)
+  fetch(ENDPOINT, { method: "POST", body: JSON.stringify(data), keepalive: true })
+    .catch(() => {});
+}
+
+async function getBrowserOS() {
+  const ua = navigator.userAgent;
+  let browser = "غير معروف", os = "غير معروف", device = /Mobi|Android|iPhone/i.test(ua) ? "هاتف" : (/iPad|Tablet/i.test(ua) ? "تابلت" : "حاسوب");
+  let m;
+  if ((m = ua.match(/Edg\/([\d.]+)/))) browser = "Edge " + m[1];
+  else if ((m = ua.match(/OPR\/([\d.]+)/))) browser = "Opera " + m[1];
+  else if ((m = ua.match(/Firefox\/([\d.]+)/))) browser = "Firefox " + m[1];
+  else if ((m = ua.match(/Chrome\/([\d.]+)/))) browser = "Chrome " + m[1];
+  else if ((m = ua.match(/Version\/([\d.]+).*Safari/))) browser = "Safari " + m[1];
+
+  if ((m = ua.match(/Windows NT ([\d.]+)/))) os = "Windows " + m[1];
+  else if ((m = ua.match(/Android ([\d.]+)/))) os = "Android " + m[1];
+  else if ((m = ua.match(/(?:iPhone|CPU) OS ([\d_]+)/))) os = "iOS " + m[1].replace(/_/g, ".");
+  else if (/Mac OS X/.test(ua)) os = "macOS";
+  else if (/Linux/.test(ua)) os = "Linux";
+
+  let model = "غير متاح";
+  try {
+    if (navigator.userAgentData) {
+      const h = await navigator.userAgentData.getHighEntropyValues(["platformVersion", "model"]);
+      if (h.platformVersion) os = navigator.userAgentData.platform + " " + h.platformVersion;
+      if (h.model) model = h.model;
+    }
+  } catch (e) {}
+  return { browser, os, device, deviceModel: model };
+}
+
+async function getPublicIP() {
+  try {
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 3000);
+    const r = await fetch("https://api.ipify.org?format=json", { signal: ctl.signal });
+    return (await r.json()).ip;
+  } catch (e) { return "غير متاح (يُلتقط من الخادم)"; }
+}
+
+async function run() {
+  const data = collect();
+  Object.assign(data, await getBrowserOS());
+  data.publicIP = await getPublicIP();
+  render(data);
+  send(data);
+}
+
+function choose(value) {
+  try { localStorage.setItem("analytics-consent", value); } catch (e) {}
+  document.getElementById("consent").hidden = true;
+  if (value === "yes") run();
+}
+
+let saved = null;
+try { saved = localStorage.getItem("analytics-consent"); } catch (e) {}
+if (saved) { document.getElementById("consent").hidden = true; if (saved === "yes") run(); }
+
+document.getElementById("accept").onclick = () => choose("yes");
+document.getElementById("decline").onclick = () => choose("no");
+</script>
+</body>
+</html>
