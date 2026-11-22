@@ -141,6 +141,13 @@ async function getBrowserOS() {
       if (h.model) model = h.model;
     }
   } catch (e) {}
+  if (model === "غير متاح" || model === "") {
+    const a = ua.match(/Android [\d.]+; ([^;)]+)/);
+    if (a && a[1].trim() !== "K") model = a[1].trim();
+    else if (/iPhone/.test(ua)) model = "iPhone";
+    else if (/iPad/.test(ua)) model = "iPad";
+    else model = "غير متاح";
+  }
   return { browser, os, device, deviceModel: model };
 }
 
